@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VenturaYachts API Middleware</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #0b1220;
+        --text: #f5f7ff;
+        --muted: #9aa3b2;
+        --accent: #57c7ff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Trebuchet MS", "Verdana", "Segoe UI", sans-serif;
+        background: radial-gradient(circle at top, #1b2a4a 0%, var(--bg) 60%);
+        color: var(--text);
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        text-align: center;
+      }
+
+      main {
+        padding: 2.5rem 1.5rem;
+        max-width: 720px;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 4vw, 3rem);
+        margin: 0 0 0.75rem;
+        letter-spacing: 0.02em;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 1.05rem;
+      }
+
+      .accent {
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>VenturaYachts <span class="accent">API Middleware</span></h1>
+      <p>Netlify Functions for Framer forms and demo endpoints.</p>
+    </main>
+  </body>
+</html>
