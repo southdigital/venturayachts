@@ -6,6 +6,7 @@ const CACHE_KEY_URL = "https://cache.local/boats-merged-base";
 
 const DEFAULT_TTL_SECONDS = 30 * 60;
 const DEFAULT_PER_PAGE = 10;
+const DEFAULT_FETCH_TIMEOUT_MS = 8000;
 
 const DEFAULT_BOATSCOM_KEY = "5bd306bd6169";
 const DEFAULT_BOATWIZARD_EVENT_ID = "80eef85c-313d-4b83-9053-0cba19e92a93";
@@ -31,6 +32,7 @@ export function getConfig() {
   return {
     ttlSeconds: envInt("BOATS_CACHE_TTL_SECONDS", DEFAULT_TTL_SECONDS),
     perPage: envInt("BOATS_PER_PAGE", DEFAULT_PER_PAGE),
+    fetchTimeoutMs: envInt("BOATS_FETCH_TIMEOUT_MS", DEFAULT_FETCH_TIMEOUT_MS),
     boatsComKey: envString("BOATSCOM_API_KEY") || DEFAULT_BOATSCOM_KEY,
     boatWizardEventId: envString("BOATWIZARD_EVENT_ID") || DEFAULT_BOATWIZARD_EVENT_ID,
     fxRatesUrl: envString("FX_RATES_URL"),
@@ -190,22 +192,33 @@ function extractXmlMeasure(node) {
   return { value: node, unit: null };
 }
 
-async function fetchJson(url, options = {}) {
-  const res = await fetch(url, options);
+async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+async function fetchJson(url, options = {}, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS) {
+  const res = await fetchWithTimeout(url, options, timeoutMs);
   if (!res.ok) throw new Error(`Fetch failed ${res.status} for ${url}`);
   return res.json();
 }
 
-async function fetchText(url, options = {}) {
-  const res = await fetch(url, options);
+async function fetchText(url, options = {}, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS) {
+  const res = await fetchWithTimeout(url, options, timeoutMs);
   if (!res.ok) throw new Error(`Fetch failed ${res.status} for ${url}`);
   return res.text();
 }
 
 async function getCurrConvert(cfg) {
+  const timeoutMs = Math.min(cfg.fetchTimeoutMs || DEFAULT_FETCH_TIMEOUT_MS, 6000);
   if (cfg.fxRatesUrl) {
     try {
-      const fx = await fetchJson(cfg.fxRatesUrl);
+      const fx = await fetchJson(cfg.fxRatesUrl, {}, timeoutMs);
       if (fx && typeof fx === "object") {
         if (fx.base && fx.rates) {
           const base = fx.base.toUpperCase();
@@ -247,7 +260,7 @@ async function getCurrConvert(cfg) {
     const url = `https://api.currconv.com/api/v7/convert?q=${q}&compact=y&apiKey=${encodeURIComponent(
       cfg.currconvKey
     )}`;
-    const data = await fetchJson(url);
+    const data = await fetchJson(url, {}, timeoutMs);
     const map = {};
     for (const [key, value] of Object.entries(data || {})) {
       if (!key.includes("_")) continue;
@@ -452,8 +465,6 @@ export async function fetchAndBuildBaseDataset() {
   if (!cfg.boatsComKey) throw new Error("Missing env var BOATSCOM_API_KEY");
   if (!cfg.boatWizardEventId) throw new Error("Missing env var BOATWIZARD_EVENT_ID");
 
-  const currConvert = (await getCurrConvert(cfg)) || {};
-
   const boatsComUrl =
     "https://services.boats.com/pls/boats/search" +
     "?fields=DocumentId,YachtWorldID,CabinsCountNumeric,MaximumNumberOfPassengersNumeric,EngineMakeString,EngineModel,EngineFuel,TotalEnginePowerQuantity,BoatLocation,ModelYear,GeneralBoatDescription,MaximumSpeedMeasure,TaxStatusCode,ModelExact,Images,Price,NormNominalLength,MakeStringExact" +
@@ -473,22 +484,34 @@ export async function fetchAndBuildBaseDataset() {
   let boatsComItems = [];
   let boatWizardNodes = [];
 
-  try {
-    const boatsComJson = await fetchJson(boatsComUrl);
+  const [currResult, boatsComResult, boatWizardResult] = await Promise.allSettled([
+    getCurrConvert(cfg),
+    fetchJson(boatsComUrl, {}, cfg.fetchTimeoutMs),
+    fetchText(boatWizardUrl, {}, cfg.fetchTimeoutMs),
+  ]);
+
+  const currConvert =
+    currResult.status === "fulfilled" && currResult.value ? currResult.value : {};
+
+  if (boatsComResult.status === "fulfilled") {
+    const boatsComJson = boatsComResult.value;
     boatsComItems = Array.isArray(boatsComJson?.data?.results) ? boatsComJson.data.results : [];
-  } catch (e) {
-    source_status.boatscom = { ok: false, error: e?.message || "boatscom failed" };
+  } else {
+    source_status.boatscom = { ok: false, error: boatsComResult.reason?.message || "boatscom failed" };
   }
 
-  try {
-    const xmlText = await fetchText(boatWizardUrl);
+  if (boatWizardResult.status === "fulfilled") {
+    const xmlText = boatWizardResult.value;
     const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
     const parsed = parser.parse(xmlText);
     const root = parsed?.ArrayOfVehicleRemarketing || parsed;
     const nodes = root?.VehicleRemarketing;
     boatWizardNodes = Array.isArray(nodes) ? nodes : nodes ? [nodes] : [];
-  } catch (e) {
-    source_status.boatwizard = { ok: false, error: e?.message || "boatwizard failed" };
+  } else {
+    source_status.boatwizard = {
+      ok: false,
+      error: boatWizardResult.reason?.message || "boatwizard failed",
+    };
   }
 
   const boatsComData = boatsComItems
