@@ -18,3 +18,15 @@
   to = "/.netlify/functions/boats"
   status = 200
   force = true
+
+[[redirects]]
+  from = "/boatscom-raw"
+  to = "/.netlify/functions/boatscom-raw"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/boatwizard-raw"
+  to = "/.netlify/functions/boatwizard-raw"
+  status = 200
+  force = true
