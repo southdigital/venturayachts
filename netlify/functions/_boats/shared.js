@@ -1,12 +1,8 @@
-import { caches } from "@netlify/cache";
 import { XMLParser } from "fast-xml-parser";
-
-const CACHE_NAME = "boats-merged-v1";
-const CACHE_KEY_URL = "https://cache.local/boats-merged-base";
 
 const DEFAULT_TTL_SECONDS = 30 * 60;
 const DEFAULT_PER_PAGE = 10;
-const DEFAULT_FETCH_TIMEOUT_MS = 8000;
+const DEFAULT_FETCH_TIMEOUT_MS = 5000;
 
 const DEFAULT_BOATSCOM_KEY = "5bd306bd6169";
 const DEFAULT_BOATWIZARD_EVENT_ID = "80eef85c-313d-4b83-9053-0cba19e92a93";
@@ -14,6 +10,8 @@ const DEFAULT_CURRCONV_KEY = "32e0eac2807f4ce3ac976f8233ed2f06";
 
 const SUPPORTED_CURRENCIES = ["GBP", "EUR", "USD"];
 const DEFAULT_LANGUAGE = "en";
+
+let memoryCache = null;
 
 function envInt(name, fallback) {
   const v = process.env[name];
@@ -551,44 +549,16 @@ function isExpired(cached, ttlSeconds) {
 
 export async function getCachedBaseDataset({ forceRefresh = false } = {}) {
   const cfg = getConfig();
-  const cache = await caches.open(CACHE_NAME);
-  const cacheKey = new Request(CACHE_KEY_URL);
-
-  let cachedData = null;
-  try {
-    const cached = await cache.match(cacheKey);
-    if (cached) cachedData = await cached.json();
-  } catch {
-    cachedData = null;
-  }
-
+  const cachedData = memoryCache;
   const expired = cachedData ? isExpired(cachedData, cfg.ttlSeconds) : true;
 
   if (!forceRefresh && cachedData && !expired) {
     return cachedData;
   }
 
-  try {
-    const built = await fetchAndBuildBaseDataset();
-    const respToCache = new Response(JSON.stringify(built), {
-      headers: {
-        "content-type": "application/json",
-        "cache-control": `public, max-age=${cfg.ttlSeconds}`,
-      },
-    });
-
-    await cache.put(cacheKey, respToCache);
-    return built;
-  } catch (e) {
-    if (cachedData) {
-      return {
-        ...cachedData,
-        stale: true,
-        refresh_error: e?.message || "Refresh failed",
-      };
-    }
-    throw e;
-  }
+  const built = await fetchAndBuildBaseDataset();
+  memoryCache = built;
+  return built;
 }
 
 export function applyQueryFiltering(base, url) {
