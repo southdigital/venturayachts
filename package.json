@@ -1,7 +1,7 @@
 {
   "type": "module",
   "dependencies": {
-    "@netlify/cache": "^4.0.0",
+    "@netlify/cache": "^3.3.5",
     "fast-xml-parser": "^4.3.6"
   }
 }
