@@ -1,6 +1,14 @@
-[build]
-  functions = "netlify/functions"
-  publish = "."
-
 [functions]
-  node_bundler = "esbuild"
+  directory = "netlify/functions"
+
+[[redirects]]
+  from = "/.netlify/functions/boats/refresh"
+  to = "/.netlify/functions/boats-refresh"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/.netlify/functions/boats/*"
+  to = "/.netlify/functions/boats?id=:splat"
+  status = 200
+  force = true
