@@ -10,6 +10,10 @@ const DEFAULT_CURRCONV_KEY = "32e0eac2807f4ce3ac976f8233ed2f06";
 
 const SUPPORTED_CURRENCIES = ["GBP", "EUR", "USD"];
 const DEFAULT_LANGUAGE = "en";
+const CORS_ALLOW_ORIGIN = "*";
+const CORS_ALLOW_METHODS = "GET,POST,OPTIONS";
+const CORS_ALLOW_HEADERS = "Content-Type, Authorization";
+const CORS_MAX_AGE = "86400";
 
 let memoryCache = null;
 
@@ -44,8 +48,28 @@ export function jsonResponse(payload, status = 200, extraHeaders = {}) {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
+      "access-control-allow-origin": CORS_ALLOW_ORIGIN,
+      "access-control-allow-methods": CORS_ALLOW_METHODS,
+      "access-control-allow-headers": CORS_ALLOW_HEADERS,
+      "access-control-max-age": CORS_MAX_AGE,
       ...extraHeaders,
     },
+  });
+}
+
+export function corsHeaders() {
+  return {
+    "access-control-allow-origin": CORS_ALLOW_ORIGIN,
+    "access-control-allow-methods": CORS_ALLOW_METHODS,
+    "access-control-allow-headers": CORS_ALLOW_HEADERS,
+    "access-control-max-age": CORS_MAX_AGE,
+  };
+}
+
+export function corsPreflightResponse() {
+  return new Response(null, {
+    status: 204,
+    headers: corsHeaders(),
   });
 }
 

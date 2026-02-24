@@ -1,7 +1,16 @@
-import { getCachedBaseDataset, applyQueryFiltering, jsonResponse } from "./_boats/shared.js";
+import {
+  getCachedBaseDataset,
+  applyQueryFiltering,
+  jsonResponse,
+  corsPreflightResponse,
+} from "./_boats/shared.js";
 
 export default async (req) => {
   try {
+    if (req.method === "OPTIONS") {
+      return corsPreflightResponse();
+    }
+
     const url = new URL(req.url);
 
     // If netlify.toml rewrite is used, detail calls arrive as ?id=<splat>

@@ -1,6 +1,10 @@
-import { getCachedBaseDataset, jsonResponse } from "./_boats/shared.js";
+import { getCachedBaseDataset, jsonResponse, corsPreflightResponse } from "./_boats/shared.js";
 
 export default async (req) => {
+  if (req.method === "OPTIONS") {
+    return corsPreflightResponse();
+  }
+
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed. Use POST." }, 405, {
       allow: "POST",

@@ -1,4 +1,4 @@
-import { getConfig, jsonResponse } from "./_boats/shared.js";
+import { getConfig, jsonResponse, corsHeaders, corsPreflightResponse } from "./_boats/shared.js";
 
 const DEFAULT_TIMEOUT_MS = 8000;
 
@@ -12,9 +12,13 @@ async function fetchWithTimeout(url, timeoutMs) {
   }
 }
 
-export default async () => {
+export default async (req) => {
   const cfg = getConfig();
   const timeoutMs = Math.max(1000, cfg.fetchTimeoutMs || DEFAULT_TIMEOUT_MS);
+
+  if (req?.method === "OPTIONS") {
+    return corsPreflightResponse();
+  }
 
   const boatWizardUrl = `https://services.boatwizard.com/bridge/events/${encodeURIComponent(
     cfg.boatWizardEventId
@@ -39,6 +43,7 @@ export default async () => {
       status: 200,
       headers: {
         "content-type": "application/xml; charset=utf-8",
+        ...corsHeaders(),
       },
     });
   } catch (e) {
