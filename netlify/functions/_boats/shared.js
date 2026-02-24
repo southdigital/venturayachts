@@ -500,9 +500,16 @@ export async function fetchAndBuildBaseDataset() {
 
   if (boatWizardResult.status === "fulfilled") {
     const xmlText = boatWizardResult.value;
-    const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
+    const parser = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: "",
+      removeNSPrefix: true,
+    });
     const parsed = parser.parse(xmlText);
-    const root = parsed?.ArrayOfVehicleRemarketing || parsed;
+    const root =
+      parsed?.ProcessVehicleRemarketingDataArea ||
+      parsed?.ArrayOfVehicleRemarketing ||
+      parsed;
     const nodes = root?.VehicleRemarketing;
     boatWizardNodes = Array.isArray(nodes) ? nodes : nodes ? [nodes] : [];
   } else {
