@@ -271,7 +271,7 @@ async function getCurrConvert(cfg) {
         if (Object.keys(map).length) return map;
       }
     } catch {
-      return null;
+      // If FX_RATES_URL is set but fails, fall back to currconv below.
     }
   }
 
