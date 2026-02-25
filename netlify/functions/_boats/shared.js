@@ -9,14 +9,6 @@ const DEFAULT_BOATWIZARD_EVENT_ID = "80eef85c-313d-4b83-9053-0cba19e92a93";
 const DEFAULT_CURRCONV_KEY = "32e0eac2807f4ce3ac976f8233ed2f06";
 
 const SUPPORTED_CURRENCIES = ["GBP", "EUR", "USD"];
-const REQUIRED_RATE_KEYS = [
-  "EUR_GBP",
-  "GBP_EUR",
-  "USD_GBP",
-  "GBP_USD",
-  "USD_EUR",
-  "EUR_USD",
-];
 const DEFAULT_LANGUAGE = "en";
 const CORS_ALLOW_ORIGIN = "*";
 const CORS_ALLOW_METHODS = "GET,POST,OPTIONS";
@@ -38,11 +30,6 @@ function envString(name) {
   return trimmed.length ? trimmed : null;
 }
 
-function hasRequiredRates(map) {
-  if (!map || typeof map !== "object") return false;
-  return REQUIRED_RATE_KEYS.every((key) => Number.isFinite(Number(map[key])));
-}
-
 export function getConfig() {
   return {
     ttlSeconds: envInt("BOATS_CACHE_TTL_SECONDS", DEFAULT_TTL_SECONDS),
@@ -50,9 +37,7 @@ export function getConfig() {
     fetchTimeoutMs: envInt("BOATS_FETCH_TIMEOUT_MS", DEFAULT_FETCH_TIMEOUT_MS),
     boatsComKey: envString("BOATSCOM_API_KEY") || DEFAULT_BOATSCOM_KEY,
     boatWizardEventId: envString("BOATWIZARD_EVENT_ID") || DEFAULT_BOATWIZARD_EVENT_ID,
-    fxRatesUrl: envString("FX_RATES_URL"),
-    currconvKey:
-      envString("CURRCONV_API_KEY") || envString("CURRCONV_KEY") || DEFAULT_CURRCONV_KEY,
+    currconvKey: DEFAULT_CURRCONV_KEY,
   };
 }
 
@@ -251,84 +236,27 @@ async function fetchText(url, options = {}, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS
 
 async function getCurrConvert(cfg) {
   const timeoutMs = Math.min(cfg.fetchTimeoutMs || DEFAULT_FETCH_TIMEOUT_MS, 6000);
-  let fxMap = null;
-  if (cfg.fxRatesUrl) {
-    try {
-      const fx = await fetchJson(cfg.fxRatesUrl, {}, timeoutMs);
-      if (fx && typeof fx === "object") {
-        if (fx.base && fx.rates) {
-          const base = fx.base.toUpperCase();
-          const rates = fx.rates || {};
-          const map = {};
-          for (const from of SUPPORTED_CURRENCIES) {
-            for (const to of SUPPORTED_CURRENCIES) {
-              if (from === to) continue;
-              const rateFrom = from === base ? 1 : Number(rates[from]);
-              const rateTo = to === base ? 1 : Number(rates[to]);
-              if (Number.isFinite(rateFrom) && Number.isFinite(rateTo) && rateFrom !== 0) {
-                map[`${from}_${to}`] = rateTo / rateFrom;
-              }
-            }
-          }
-          if (Object.keys(map).length) {
-            if (hasRequiredRates(map)) return map;
-            fxMap = map;
-          }
-        }
+  if (!cfg.currconvKey) return null;
 
-        const map = {};
-        for (const [key, value] of Object.entries(fx)) {
-          if (!key.includes("_")) continue;
-          if (typeof value === "number") {
-            map[key] = value;
-          } else if (value && typeof value === "object" && "val" in value) {
-            map[key] = Number(value.val);
-          }
-        }
-        if (Object.keys(map).length) {
-          if (hasRequiredRates(map)) return map;
-          fxMap = map;
-        }
+  try {
+    const q = "EUR_GBP,GBP_EUR,USD_GBP,GBP_USD,USD_EUR,EUR_USD";
+    const url = `https://api.currconv.com/api/v7/convert?q=${q}&compact=y&apiKey=${encodeURIComponent(
+      cfg.currconvKey
+    )}`;
+    const data = await fetchJson(url, {}, timeoutMs);
+    const map = {};
+    for (const [key, value] of Object.entries(data || {})) {
+      if (!key.includes("_")) continue;
+      if (typeof value === "number") {
+        map[key] = value;
+      } else if (value && typeof value === "object" && "val" in value) {
+        map[key] = Number(value.val);
       }
-    } catch {
-      // If FX_RATES_URL is set but fails, fall back to currconv below.
     }
+    return map;
+  } catch {
+    return null;
   }
-
-  let currMap = null;
-  if (cfg.currconvKey) {
-    try {
-      const q = "EUR_GBP,GBP_EUR,USD_GBP,GBP_USD,USD_EUR,EUR_USD";
-      const url = `https://api.currconv.com/api/v7/convert?q=${q}&compact=y&apiKey=${encodeURIComponent(
-        cfg.currconvKey
-      )}`;
-      const data = await fetchJson(url, {}, timeoutMs);
-      const map = {};
-      for (const [key, value] of Object.entries(data || {})) {
-        if (!key.includes("_")) continue;
-        if (typeof value === "number") {
-          map[key] = value;
-        } else if (value && typeof value === "object" && "val" in value) {
-          map[key] = Number(value.val);
-        }
-      }
-      if (Object.keys(map).length) {
-        if (hasRequiredRates(map)) return map;
-        currMap = map;
-      }
-    } catch {
-      // Continue to fallback selection below.
-    }
-  }
-
-  if (fxMap && currMap) {
-    const merged = { ...fxMap, ...currMap };
-    if (hasRequiredRates(merged)) return merged;
-  }
-
-  if (currMap && Object.keys(currMap).length) return currMap;
-  if (fxMap && Object.keys(fxMap).length) return fxMap;
-  return null;
 }
 
 function normalizeBoatsCom(item, currConvert) {
