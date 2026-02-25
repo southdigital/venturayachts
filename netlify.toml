@@ -20,6 +20,12 @@
   force = true
 
 [[redirects]]
+  from = "/brands"
+  to = "/.netlify/functions/brands"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/boatscom-raw"
   to = "/.netlify/functions/boatscom-raw"
   status = 200
