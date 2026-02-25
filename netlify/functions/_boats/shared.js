@@ -239,21 +239,29 @@ async function getCurrConvert(cfg) {
   if (!cfg.currconvKey) return null;
 
   try {
-    const q = "EUR_GBP,GBP_EUR,USD_GBP,GBP_USD,USD_EUR,EUR_USD";
-    const url = `https://api.currconv.com/api/v7/convert?q=${q}&compact=y&apiKey=${encodeURIComponent(
-      cfg.currconvKey
-    )}`;
-    const data = await fetchJson(url, {}, timeoutMs);
+    const queries = ["EUR_GBP,GBP_EUR", "USD_GBP,GBP_USD", "USD_EUR,EUR_USD"];
+    const requests = queries.map((q) => {
+      const url = `https://api.currconv.com/api/v7/convert?q=${q}&compact=y&apiKey=${encodeURIComponent(
+        cfg.currconvKey
+      )}`;
+      return fetchJson(url, {}, timeoutMs);
+    });
+
+    const results = await Promise.allSettled(requests);
     const map = {};
-    for (const [key, value] of Object.entries(data || {})) {
-      if (!key.includes("_")) continue;
-      if (typeof value === "number") {
-        map[key] = value;
-      } else if (value && typeof value === "object" && "val" in value) {
-        map[key] = Number(value.val);
+    for (const res of results) {
+      if (res.status !== "fulfilled") continue;
+      const data = res.value || {};
+      for (const [key, value] of Object.entries(data)) {
+        if (!key.includes("_")) continue;
+        if (typeof value === "number") {
+          map[key] = value;
+        } else if (value && typeof value === "object" && "val" in value) {
+          map[key] = Number(value.val);
+        }
       }
     }
-    return map;
+    return Object.keys(map).length ? map : null;
   } catch {
     return null;
   }
