@@ -170,6 +170,31 @@ function parseFormattedNumber(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function parsePriceFilterValue(rawValue) {
+  if (rawValue == null) return null;
+  const raw = stripApostrophes(rawValue).toString().trim();
+  if (raw === "") return null;
+
+  const hasMillionHint = /m/i.test(raw);
+  const cleaned = raw.replace(/[^0-9.,]/g, "");
+  if (!/\d/.test(cleaned)) return null;
+
+  const numeric = parseFormattedNumber(cleaned.replace(/m/gi, ""));
+  if (!Number.isFinite(numeric)) return null;
+
+  if (hasMillionHint) {
+    return numeric * 1_000_000;
+  }
+
+  // Legacy UI passes values in millions (e.g., 2.5 => 2,500,000)
+  if (numeric > 0 && numeric < 1000) {
+    return numeric * 1_000_000;
+  }
+
+  // Assume absolute currency value when the number is large
+  return numeric;
+}
+
 function toNumberOrZero(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -565,7 +590,8 @@ export function applyQueryFiltering(base, url) {
   const cfg = getConfig();
   const params = url.searchParams;
 
-  const currencyVal = stripApostrophes(params.get("currencyVal") || "").trim() || "EUR";
+  const currencyRaw = stripApostrophes(params.get("currencyVal") || "").trim();
+  const currencyVal = currencyRaw ? currencyRaw.toUpperCase() : "EUR";
   const measurementVal = stripApostrophes(params.get("measurementVal") || "").trim() || "Metres";
   const sortby = stripApostrophes(params.get("sortby") || "").trim() || "low";
   const pagenumParam = params.get("pagenum") || params.get("page") || "1";
@@ -589,20 +615,14 @@ export function applyQueryFiltering(base, url) {
     rows = rows.filter((b) => (b.make ?? "") === brands);
   }
 
-  const pricefrom = stripApostrophes(params.get("pricefrom") || "");
-  if (pricefrom !== "") {
-    const priceVal = Number(pricefrom) * 1_000_000;
-    if (Number.isFinite(priceVal)) {
-      rows = rows.filter((b) => parseFormattedNumber(b[priceCol]) >= priceVal);
-    }
+  const pricefromVal = parsePriceFilterValue(params.get("pricefrom"));
+  if (pricefromVal != null) {
+    rows = rows.filter((b) => parseFormattedNumber(b[priceCol]) >= pricefromVal);
   }
 
-  const priceto = stripApostrophes(params.get("priceto") || "");
-  if (priceto !== "") {
-    const priceVal = Number(priceto) * 1_000_000;
-    if (Number.isFinite(priceVal)) {
-      rows = rows.filter((b) => parseFormattedNumber(b[priceCol]) < priceVal);
-    }
+  const pricetoVal = parsePriceFilterValue(params.get("priceto"));
+  if (pricetoVal != null) {
+    rows = rows.filter((b) => parseFormattedNumber(b[priceCol]) < pricetoVal);
   }
 
   const lengthfrom = stripApostrophes(params.get("lengthfrom") || "");
