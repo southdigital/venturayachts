@@ -1,4 +1,10 @@
-import { getConfig, jsonResponse, corsHeaders, corsPreflightResponse } from "./_boats/shared.js";
+import {
+  getConfig,
+  jsonResponse,
+  corsHeaders,
+  corsPreflightResponse,
+  corsGuardResponse,
+} from "./_boats/shared.js";
 
 const DEFAULT_TIMEOUT_MS = 8000;
 
@@ -17,7 +23,12 @@ export default async (req) => {
   const timeoutMs = Math.max(1000, cfg.fetchTimeoutMs || DEFAULT_TIMEOUT_MS);
 
   if (req?.method === "OPTIONS") {
-    return corsPreflightResponse();
+    return corsPreflightResponse(req);
+  }
+
+  const corsGuard = corsGuardResponse(req);
+  if (corsGuard) {
+    return corsGuard;
   }
 
   const boatsComUrl =
@@ -38,7 +49,9 @@ export default async (req) => {
           status: res.status,
           body: bodyText,
         },
-        res.status
+        res.status,
+        {},
+        req
       );
     }
 
@@ -46,10 +59,10 @@ export default async (req) => {
       status: 200,
       headers: {
         "content-type": "application/json; charset=utf-8",
-        ...corsHeaders(),
+        ...corsHeaders(req),
       },
     });
   } catch (e) {
-    return jsonResponse({ error: e?.message || "Fetch failed" }, 500);
+    return jsonResponse({ error: e?.message || "Fetch failed" }, 500, {}, req);
   }
 };

@@ -14,6 +14,7 @@ const CORS_ALLOW_ORIGIN = "*";
 const CORS_ALLOW_METHODS = "GET,POST,OPTIONS";
 const CORS_ALLOW_HEADERS = "Content-Type, Authorization";
 const CORS_MAX_AGE = "86400";
+const DEFAULT_CORS_ERROR = "Origin not allowed";
 
 let memoryCache = null;
 
@@ -30,6 +31,40 @@ function envString(name) {
   return trimmed.length ? trimmed : null;
 }
 
+function parseAllowedOrigins(raw) {
+  if (!raw) return null;
+  const parts = raw
+    .split(/[\n,]/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return parts.length ? parts : null;
+}
+
+function normalizeOrigin(value) {
+  if (!value) return "";
+  const trimmed = value.trim();
+  try {
+    return new URL(trimmed).origin.toLowerCase();
+  } catch {
+    return trimmed.toLowerCase();
+  }
+}
+
+const ALLOWED_ORIGINS = parseAllowedOrigins(envString("NETLIFY_ALLOWED_ORIGINS"));
+
+function isOriginAllowed(origin) {
+  if (!ALLOWED_ORIGINS) return true;
+  if (!origin) return true;
+  const normalized = normalizeOrigin(origin);
+  return ALLOWED_ORIGINS.some((allowed) => normalizeOrigin(allowed) === normalized);
+}
+
+function resolveCorsAllowOrigin(origin) {
+  if (!ALLOWED_ORIGINS) return CORS_ALLOW_ORIGIN;
+  if (!origin) return null;
+  return isOriginAllowed(origin) ? origin : null;
+}
+
 export function getConfig() {
   return {
     ttlSeconds: envInt("BOATS_CACHE_TTL_SECONDS", DEFAULT_TTL_SECONDS),
@@ -41,33 +76,54 @@ export function getConfig() {
   };
 }
 
-export function jsonResponse(payload, status = 200, extraHeaders = {}) {
+export function jsonResponse(payload, status = 200, extraHeaders = {}, req = null) {
   return new Response(JSON.stringify(payload), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "access-control-allow-origin": CORS_ALLOW_ORIGIN,
-      "access-control-allow-methods": CORS_ALLOW_METHODS,
-      "access-control-allow-headers": CORS_ALLOW_HEADERS,
-      "access-control-max-age": CORS_MAX_AGE,
+      ...corsHeaders(req),
       ...extraHeaders,
     },
   });
 }
 
-export function corsHeaders() {
-  return {
-    "access-control-allow-origin": CORS_ALLOW_ORIGIN,
+export function corsHeaders(req = null) {
+  const origin = req?.headers?.get("origin") ?? null;
+  const allowOrigin = resolveCorsAllowOrigin(origin);
+  const headers = {
     "access-control-allow-methods": CORS_ALLOW_METHODS,
     "access-control-allow-headers": CORS_ALLOW_HEADERS,
     "access-control-max-age": CORS_MAX_AGE,
   };
+  if (allowOrigin) {
+    headers["access-control-allow-origin"] = allowOrigin;
+  }
+  if (ALLOWED_ORIGINS) {
+    headers.vary = "Origin";
+  }
+  return headers;
 }
 
-export function corsPreflightResponse() {
+export function corsPreflightResponse(req = null) {
+  const origin = req?.headers?.get("origin") ?? null;
+  if (origin && !isOriginAllowed(origin)) {
+    return new Response(null, { status: 403 });
+  }
   return new Response(null, {
     status: 204,
-    headers: corsHeaders(),
+    headers: corsHeaders(req),
+  });
+}
+
+export function corsGuardResponse(req = null) {
+  const origin = req?.headers?.get("origin") ?? null;
+  if (!origin) return null;
+  if (isOriginAllowed(origin)) return null;
+  return new Response(JSON.stringify({ error: DEFAULT_CORS_ERROR }), {
+    status: 403,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+    },
   });
 }
 

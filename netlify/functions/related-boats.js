@@ -1,4 +1,9 @@
-import { getCachedBaseDataset, jsonResponse, corsPreflightResponse } from "./_boats/shared.js";
+import {
+  getCachedBaseDataset,
+  jsonResponse,
+  corsPreflightResponse,
+  corsGuardResponse,
+} from "./_boats/shared.js";
 
 function normalizeId(raw) {
   if (!raw) return "";
@@ -34,7 +39,12 @@ function pushUnique(list, items, excludeIds, limit) {
 export default async (req) => {
   try {
     if (req.method === "OPTIONS") {
-      return corsPreflightResponse();
+      return corsPreflightResponse(req);
+    }
+
+    const corsGuard = corsGuardResponse(req);
+    if (corsGuard) {
+      return corsGuard;
     }
 
     const url = new URL(req.url);
@@ -43,13 +53,13 @@ export default async (req) => {
     const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 10) : 3;
 
     if (!id) {
-      return jsonResponse({ error: "Missing id" }, 400);
+      return jsonResponse({ error: "Missing id" }, 400, {}, req);
     }
 
     const base = await getCachedBaseDataset();
     const data = Array.isArray(base?.data) ? base.data : [];
     if (data.length === 0) {
-      return jsonResponse({ error: "No boats available" }, 404);
+      return jsonResponse({ error: "No boats available" }, 404, {}, req);
     }
 
     const targetId = normalizeId(id);
@@ -102,8 +112,8 @@ export default async (req) => {
         source_status: base?.source_status ?? null,
       },
       data: related,
-    });
+    }, 200, {}, req);
   } catch (e) {
-    return jsonResponse({ error: e?.message || "Unexpected error" }, 500);
+    return jsonResponse({ error: e?.message || "Unexpected error" }, 500, {}, req);
   }
 };

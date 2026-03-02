@@ -1,4 +1,9 @@
-import { getCachedBaseDataset, jsonResponse, corsPreflightResponse } from "./_boats/shared.js";
+import {
+  getCachedBaseDataset,
+  jsonResponse,
+  corsPreflightResponse,
+  corsGuardResponse,
+} from "./_boats/shared.js";
 
 function normalizeBrand(value) {
   if (value == null) return "";
@@ -8,7 +13,12 @@ function normalizeBrand(value) {
 export default async (req) => {
   try {
     if (req.method === "OPTIONS") {
-      return corsPreflightResponse();
+      return corsPreflightResponse(req);
+    }
+
+    const corsGuard = corsGuardResponse(req);
+    if (corsGuard) {
+      return corsGuard;
     }
 
     const base = await getCachedBaseDataset();
@@ -35,8 +45,8 @@ export default async (req) => {
         total: brands.length,
       },
       data: brands,
-    });
+    }, 200, {}, req);
   } catch (e) {
-    return jsonResponse({ error: e?.message || "Unexpected error" }, 500);
+    return jsonResponse({ error: e?.message || "Unexpected error" }, 500, {}, req);
   }
 };

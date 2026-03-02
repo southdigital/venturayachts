@@ -3,12 +3,18 @@ import {
   applyQueryFiltering,
   jsonResponse,
   corsPreflightResponse,
+  corsGuardResponse,
 } from "./_boats/shared.js";
 
 export default async (req) => {
   try {
     if (req.method === "OPTIONS") {
-      return corsPreflightResponse();
+      return corsPreflightResponse(req);
+    }
+
+    const corsGuard = corsGuardResponse(req);
+    if (corsGuard) {
+      return corsGuard;
     }
 
     const url = new URL(req.url);
@@ -32,7 +38,7 @@ export default async (req) => {
       );
 
       if (!found) {
-        return jsonResponse({ error: "Not found", id: normalizedId }, 404);
+        return jsonResponse({ error: "Not found", id: normalizedId }, 404, {}, req);
       }
 
       return jsonResponse({
@@ -42,13 +48,13 @@ export default async (req) => {
           source_status: base.source_status,
         },
         data: found,
-      });
+      }, 200, {}, req);
     }
 
     // List route
     const filtered = applyQueryFiltering(base, url);
-    return jsonResponse(filtered);
+    return jsonResponse(filtered, 200, {}, req);
   } catch (e) {
-    return jsonResponse({ error: e?.message || "Unexpected error" }, 500);
+    return jsonResponse({ error: e?.message || "Unexpected error" }, 500, {}, req);
   }
 };
