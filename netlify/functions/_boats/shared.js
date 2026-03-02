@@ -237,6 +237,51 @@ function extractXmlMeasure(node) {
   return { value: node, unit: null };
 }
 
+function normalizeBoatsComVideos(videos) {
+  if (!videos || typeof videos !== "object") return [];
+
+  const urls = Array.isArray(videos.url) ? videos.url : [];
+  const titles = Array.isArray(videos.title) ? videos.title : [];
+  const descs = Array.isArray(videos.desc) ? videos.desc : [];
+  const thumbs = Array.isArray(videos.thumbnailUrl) ? videos.thumbnailUrl : [];
+
+  const total = Math.max(urls.length, titles.length, descs.length, thumbs.length);
+  if (total === 0) return [];
+
+  const out = [];
+  for (let i = 0; i < total; i += 1) {
+    const url = urls[i];
+    if (!url) continue;
+    out.push({
+      url,
+      title: titles[i] || "",
+      description: descs[i] || "",
+      thumbnail: thumbs[i] || "",
+    });
+  }
+
+  return out;
+}
+
+function extractEmbeddedMediaUrl(raw) {
+  if (!raw) return "";
+  const s = raw.toString();
+  const match = s.match(/(?:src|value)=["']([^"']+)["']/i);
+  return match ? match[1] : "";
+}
+
+function looksLikeVideoUrl(url) {
+  if (!url) return false;
+  return /youtube\.com|youtu\.be|vimeo\.com|\.mp4($|[?#])|\.webm($|[?#])|\.mov($|[?#])/i.test(url);
+}
+
+function buildBoatWizardVideoDescription(type, subtype) {
+  const parts = [type, subtype].filter(Boolean);
+  if (!parts.length) return "";
+  if (parts.length === 2 && parts[0] === parts[1]) return parts[0];
+  return parts.join(" - ");
+}
+
 async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -328,6 +373,8 @@ function normalizeBoatsCom(item, currConvert) {
     }
   }
 
+  const videos = normalizeBoatsComVideos(item?.Videos);
+
   return {
     boat_id: idRaw.toString(),
     yachtworld_id: idRaw.toString(),
@@ -359,6 +406,7 @@ function normalizeBoatsCom(item, currConvert) {
     engine_power_unit: "",
     main_image,
     image,
+    videos,
     feed: "cobrokerage",
   };
 }
@@ -442,6 +490,35 @@ function normalizeBoatWizardNode(node, currConvert) {
     }
   }
 
+  const additionalMediaRaw = detail?.AdditionalMedia;
+  const additionalMedia = Array.isArray(additionalMediaRaw)
+    ? additionalMediaRaw
+    : additionalMediaRaw
+    ? [additionalMediaRaw]
+    : [];
+
+  const videos = [];
+  for (const media of additionalMedia) {
+    const type = extractXmlValue(media?.MediaTypeString) || "";
+    const subtype = extractXmlValue(media?.MediaSubTypeString) || "";
+    const haystack = `${type} ${subtype}`.toLowerCase();
+    const mediaUrl = extractXmlValue(media?.MediaSourceURI) || "";
+    const embeddedRaw = extractXmlValue(media?.EmbeddedData?.DataString) || "";
+    const embeddedUrl = embeddedRaw ? extractEmbeddedMediaUrl(embeddedRaw) : "";
+    const url = mediaUrl || embeddedUrl;
+    if (!url) continue;
+    if (!haystack.includes("video") && !looksLikeVideoUrl(url)) continue;
+
+    videos.push({
+      url,
+      title: extractXmlValue(media?.MediaAttachmentTitle) || "",
+      description: buildBoatWizardVideoDescription(type, subtype),
+      thumbnail: extractXmlValue(media?.MediaThumbURI) || "",
+      type,
+      subtype,
+    });
+  }
+
   return {
     boat_id: boat_id.toString(),
     yachtworld_id: "",
@@ -471,6 +548,7 @@ function normalizeBoatWizardNode(node, currConvert) {
     engine_power_unit: engine_power_unit ?? "",
     main_image,
     image,
+    videos,
     feed: "ventura",
   };
 }
@@ -483,7 +561,7 @@ export async function fetchAndBuildBaseDataset() {
 
   const boatsComUrl =
     "https://services.boats.com/pls/boats/search" +
-    "?fields=DocumentId,YachtWorldID,CabinsCountNumeric,MaximumNumberOfPassengersNumeric,EngineMakeString,EngineModel,EngineFuel,TotalEnginePowerQuantity,BoatLocation,ModelYear,GeneralBoatDescription,MaximumSpeedMeasure,TaxStatusCode,ModelExact,Images,Price,NormNominalLength,MakeStringExact" +
+    "?fields=DocumentId,YachtWorldID,CabinsCountNumeric,MaximumNumberOfPassengersNumeric,EngineMakeString,EngineModel,EngineFuel,TotalEnginePowerQuantity,BoatLocation,ModelYear,GeneralBoatDescription,MaximumSpeedMeasure,TaxStatusCode,ModelExact,Images,Price,NormNominalLength,MakeStringExact,Videos" +
     "&rows=1000" +
     `&key=${encodeURIComponent(cfg.boatsComKey)}` +
     "&currency=original";
