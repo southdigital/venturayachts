@@ -2,6 +2,18 @@
   directory = "netlify/functions"
 
 [[redirects]]
+  from = "/boats/related/*"
+  to = "/.netlify/functions/related-boats?id=:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/boats/related"
+  to = "/.netlify/functions/related-boats"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/boats/refresh"
   to = "/.netlify/functions/boats-refresh"
   status = 200
