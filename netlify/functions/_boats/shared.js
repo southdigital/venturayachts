@@ -31,6 +31,12 @@ function envString(name) {
   return trimmed.length ? trimmed : null;
 }
 
+function envFlag(name) {
+  const v = envString(name);
+  if (!v) return false;
+  return ["1", "true", "yes", "on"].includes(v.toLowerCase());
+}
+
 function parseAllowedOrigins(raw) {
   if (!raw) return null;
   const parts = raw
@@ -38,6 +44,53 @@ function parseAllowedOrigins(raw) {
     .map((p) => p.trim())
     .filter(Boolean);
   return parts.length ? parts : null;
+}
+
+function splitHostPort(value) {
+  const trimmed = (value || "").trim().toLowerCase();
+  if (!trimmed) return { host: "", port: "" };
+  const lastColon = trimmed.lastIndexOf(":");
+  if (lastColon > -1 && !trimmed.includes("]")) {
+    const portPart = trimmed.slice(lastColon + 1);
+    if (/^\d+$/.test(portPart)) {
+      return { host: trimmed.slice(0, lastColon), port: portPart };
+    }
+  }
+  return { host: trimmed, port: "" };
+}
+
+function defaultPort(protocol) {
+  if (protocol === "https:") return "443";
+  if (protocol === "http:") return "80";
+  return "";
+}
+
+function parseOriginInfo(origin) {
+  try {
+    const url = new URL(origin);
+    return {
+      origin: url.origin.toLowerCase(),
+      hostname: url.hostname.toLowerCase(),
+      port: url.port || defaultPort(url.protocol),
+      protocol: url.protocol,
+    };
+  } catch {
+    return {
+      origin: (origin || "").toLowerCase(),
+      hostname: "",
+      port: "",
+      protocol: "",
+    };
+  }
+}
+
+function matchHostname(hostname, pattern) {
+  if (!hostname || !pattern) return false;
+  if (pattern.startsWith("*.")) {
+    const suffix = pattern.slice(1); // ".example.com"
+    return hostname.endsWith(suffix) && hostname.length > suffix.length;
+  }
+  return hostname === pattern;
 }
 
 function normalizeOrigin(value) {
@@ -51,12 +104,29 @@ function normalizeOrigin(value) {
 }
 
 const ALLOWED_ORIGINS = parseAllowedOrigins(envString("NETLIFY_ALLOWED_ORIGINS"));
+const CORS_DEBUG = envFlag("NETLIFY_CORS_DEBUG") || envFlag("CORS_DEBUG");
+
+function logCorsEvent(label, origin, allowed) {
+  if (!CORS_DEBUG) return;
+  const allowedLabel = ALLOWED_ORIGINS ? ALLOWED_ORIGINS.join(", ") : "*";
+  console.log(`[cors] ${label}`, { origin: origin ?? null, allowed, allowedOrigins: allowedLabel });
+}
 
 function isOriginAllowed(origin) {
   if (!ALLOWED_ORIGINS) return true;
   if (!origin) return true;
-  const normalized = normalizeOrigin(origin);
-  return ALLOWED_ORIGINS.some((allowed) => normalizeOrigin(allowed) === normalized);
+  if (origin === "null") return false;
+  const incoming = parseOriginInfo(origin);
+  return ALLOWED_ORIGINS.some((allowed) => {
+    if (!allowed) return false;
+    if (allowed.includes("://")) {
+      return normalizeOrigin(allowed) === incoming.origin;
+    }
+    const { host, port } = splitHostPort(allowed);
+    if (!matchHostname(incoming.hostname, host)) return false;
+    if (port && port !== incoming.port) return false;
+    return true;
+  });
 }
 
 function resolveCorsAllowOrigin(origin) {
@@ -106,7 +176,9 @@ export function corsHeaders(req = null) {
 
 export function corsPreflightResponse(req = null) {
   const origin = req?.headers?.get("origin") ?? null;
-  if (origin && !isOriginAllowed(origin)) {
+  const allowed = isOriginAllowed(origin);
+  logCorsEvent("preflight", origin, allowed);
+  if (origin && !allowed) {
     return new Response(null, { status: 403 });
   }
   return new Response(null, {
@@ -117,8 +189,10 @@ export function corsPreflightResponse(req = null) {
 
 export function corsGuardResponse(req = null) {
   const origin = req?.headers?.get("origin") ?? null;
+  const allowed = isOriginAllowed(origin);
+  logCorsEvent("request", origin, allowed);
   if (!origin) return null;
-  if (isOriginAllowed(origin)) return null;
+  if (allowed) return null;
   return new Response(JSON.stringify({ error: DEFAULT_CORS_ERROR }), {
     status: 403,
     headers: {
