@@ -49,8 +49,9 @@ export default async (req) => {
 
     const url = new URL(req.url);
     const id = url.searchParams.get("id") || url.searchParams.get("boat_id") || url.searchParams.get("boatid");
-    const limitParam = Number.parseInt(url.searchParams.get("limit") || "3", 10);
-    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 10) : 3;
+    const limitParam = Number.parseInt(url.searchParams.get("limit") || "15", 10);
+    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 15) : 15;
+    const fallbackCount = Math.min(3, limit);
 
     if (!id) {
       return jsonResponse({ error: "Missing id" }, 400, {}, req);
@@ -76,30 +77,35 @@ export default async (req) => {
       const excludeIds = new Set([normalizeId(target?.boat_id), normalizeId(target?.yachtworld_id)]);
 
       if (targetModel) {
-        const sameModel = data.filter(
-          (b) => normalizeText(b?.model) === targetModel
-        );
+        const sameModel = data.filter((b) => {
+          if (normalizeText(b?.model) !== targetModel) return false;
+          const boatId = normalizeId(b?.boat_id);
+          const yachtId = normalizeId(b?.yachtworld_id);
+          return !excludeIds.has(boatId) && !excludeIds.has(yachtId);
+        });
         pushUnique(related, sameModel, excludeIds, limit);
       }
 
       if (related.length < limit && targetMake) {
-        const sameMake = data.filter(
-          (b) => normalizeText(b?.make) === targetMake
-        );
+        const sameMake = data.filter((b) => {
+          if (normalizeText(b?.make) !== targetMake) return false;
+          const boatId = normalizeId(b?.boat_id);
+          const yachtId = normalizeId(b?.yachtworld_id);
+          return !excludeIds.has(boatId) && !excludeIds.has(yachtId);
+        });
         pushUnique(related, sameMake, excludeIds, limit);
       }
 
-      if (related.length < limit) {
+      if (related.length === 0 && fallbackCount > 0) {
         const remaining = data.filter((b) => {
           const boatId = normalizeId(b?.boat_id);
           const yachtId = normalizeId(b?.yachtworld_id);
-          if (excludeIds.has(boatId) || excludeIds.has(yachtId)) return false;
-          return !related.find((r) => normalizeId(r?.boat_id) === boatId);
+          return !excludeIds.has(boatId) && !excludeIds.has(yachtId);
         });
-        related = related.concat(sampleRandom(remaining, limit - related.length));
+        related = sampleRandom(remaining, Math.min(fallbackCount, remaining.length));
       }
     } else {
-      related = sampleRandom(data, Math.min(limit, data.length));
+      related = sampleRandom(data, Math.min(fallbackCount, data.length));
     }
 
     return jsonResponse({
