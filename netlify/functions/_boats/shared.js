@@ -1,8 +1,13 @@
+import { getStore } from "@netlify/blobs";
 import { XMLParser } from "fast-xml-parser";
 
 const DEFAULT_TTL_SECONDS = 30 * 60;
 const DEFAULT_PER_PAGE = 10;
 const DEFAULT_FETCH_TIMEOUT_MS = 5000;
+const DEFAULT_REFRESH_BACKOFF_SECONDS = 120;
+const DEFAULT_BLOB_STORE_NAME = "boats-cache";
+const DEFAULT_BLOB_KEY = "base-dataset";
+const BLOB_SCHEMA_VERSION = 1;
 
 const DEFAULT_BOATSCOM_KEY = "5bd306bd6169";
 const DEFAULT_BOATWIZARD_EVENT_ID = "80eef85c-313d-4b83-9053-0cba19e92a93";
@@ -17,6 +22,8 @@ const CORS_MAX_AGE = "86400";
 const DEFAULT_CORS_ERROR = "Origin not allowed";
 
 let memoryCache = null;
+let blobStore = null;
+let refreshBackoffUntil = 0;
 
 function envInt(name, fallback) {
   const v = process.env[name];
@@ -140,9 +147,12 @@ export function getConfig() {
     ttlSeconds: envInt("BOATS_CACHE_TTL_SECONDS", DEFAULT_TTL_SECONDS),
     perPage: envInt("BOATS_PER_PAGE", DEFAULT_PER_PAGE),
     fetchTimeoutMs: envInt("BOATS_FETCH_TIMEOUT_MS", DEFAULT_FETCH_TIMEOUT_MS),
+    refreshBackoffSeconds: envInt("BOATS_REFRESH_BACKOFF_SECONDS", DEFAULT_REFRESH_BACKOFF_SECONDS),
     boatsComKey: envString("BOATSCOM_API_KEY") || DEFAULT_BOATSCOM_KEY,
     boatWizardEventId: envString("BOATWIZARD_EVENT_ID") || DEFAULT_BOATWIZARD_EVENT_ID,
     currconvKey: DEFAULT_CURRCONV_KEY,
+    blobStoreName: envString("BOATS_BLOB_STORE") || DEFAULT_BLOB_STORE_NAME,
+    blobKey: envString("BOATS_BLOB_KEY") || DEFAULT_BLOB_KEY,
   };
 }
 
@@ -765,12 +775,100 @@ export async function fetchAndBuildBaseDataset() {
   const merged = Array.from(mergedMap.values());
   merged.sort((a, b) => toNumberOrZero(a.price) - toNumberOrZero(b.price));
 
+  if (!source_status.boatscom.ok && !source_status.boatwizard.ok) {
+    const err = new Error("Both boatscom and boatwizard failed");
+    err.source_status = source_status;
+    throw err;
+  }
+
   return {
     last_updated: new Date().toISOString(),
     stale: false,
     source_status,
     data: merged,
   };
+}
+
+function getBlobStore(cfg) {
+  if (blobStore) return blobStore;
+  blobStore = getStore(cfg.blobStoreName);
+  return blobStore;
+}
+
+function serializeBlobPayload(payload) {
+  return JSON.stringify({
+    v: BLOB_SCHEMA_VERSION,
+    stored_at: new Date().toISOString(),
+    payload,
+  });
+}
+
+function parseBlobPayload(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.v !== BLOB_SCHEMA_VERSION) return null;
+    if (!parsed.payload || !Array.isArray(parsed.payload.data)) return null;
+    return parsed.payload;
+  } catch {
+    return null;
+  }
+}
+
+function buildCacheMeta(base, reason, extra = {}) {
+  return {
+    hit: true,
+    reason,
+    source: extra.source || "unknown",
+    error: extra.error || null,
+    updated_at: base?.last_updated ?? null,
+    served_at: new Date().toISOString(),
+  };
+}
+
+function applyFallbackMeta(base, reason, extra = {}) {
+  if (!base) return null;
+  return {
+    ...base,
+    stale: true,
+    source_status: {
+      ...(base?.source_status || {}),
+      cache: {
+        ok: true,
+        fallback: true,
+        reason,
+        source: extra.source || "unknown",
+        error: extra.error || null,
+      },
+    },
+    cache: buildCacheMeta(base, reason, extra),
+  };
+}
+
+async function readBlobDataset(cfg, { consistency = "strong" } = {}) {
+  try {
+    const store = getBlobStore(cfg);
+    const raw = await store.get(cfg.blobKey, { consistency });
+    return parseBlobPayload(raw);
+  } catch (e) {
+    console.log("[boats] blob read failed", e?.message || e);
+    return null;
+  }
+}
+
+async function writeBlobDataset(cfg, payload) {
+  try {
+    const store = getBlobStore(cfg);
+    const body = serializeBlobPayload(payload);
+    await store.set(cfg.blobKey, body, {
+      metadata: {
+        schema: String(BLOB_SCHEMA_VERSION),
+        stored_at: payload?.last_updated || new Date().toISOString(),
+      },
+    });
+  } catch (e) {
+    console.log("[boats] blob write failed", e?.message || e);
+  }
 }
 
 function isExpired(cached, ttlSeconds) {
@@ -784,14 +882,57 @@ export async function getCachedBaseDataset({ forceRefresh = false } = {}) {
   const cfg = getConfig();
   const cachedData = memoryCache;
   const expired = cachedData ? isExpired(cachedData, cfg.ttlSeconds) : true;
+  const now = Date.now();
 
   if (!forceRefresh && cachedData && !expired) {
     return cachedData;
   }
 
-  const built = await fetchAndBuildBaseDataset();
-  memoryCache = built;
-  return built;
+  if (!forceRefresh && cachedData && now < refreshBackoffUntil) {
+    const fallback = applyFallbackMeta(cachedData, "refresh_backoff", { source: "memory" });
+    if (fallback) {
+      memoryCache = fallback;
+      return fallback;
+    }
+  }
+
+  if (!forceRefresh && !cachedData && now < refreshBackoffUntil) {
+    const blob = await readBlobDataset(cfg, { consistency: "strong" });
+    const blobFallback = applyFallbackMeta(blob, "refresh_backoff", { source: "blob" });
+    if (blobFallback) {
+      memoryCache = blobFallback;
+      return blobFallback;
+    }
+  }
+
+  try {
+    const built = await fetchAndBuildBaseDataset();
+    memoryCache = built;
+    refreshBackoffUntil = 0;
+    await writeBlobDataset(cfg, built);
+    return built;
+  } catch (e) {
+    refreshBackoffUntil = Date.now() + cfg.refreshBackoffSeconds * 1000;
+    const errorMessage = e?.message || "refresh failed";
+    const memFallback = applyFallbackMeta(cachedData, "fetch_failed", {
+      source: "memory",
+      error: errorMessage,
+    });
+    if (memFallback) {
+      memoryCache = memFallback;
+      return memFallback;
+    }
+    const blob = await readBlobDataset(cfg, { consistency: "strong" });
+    const blobFallback = applyFallbackMeta(blob, "fetch_failed", {
+      source: "blob",
+      error: errorMessage,
+    });
+    if (blobFallback) {
+      memoryCache = blobFallback;
+      return blobFallback;
+    }
+    throw e;
+  }
 }
 
 export function applyQueryFiltering(base, url) {
