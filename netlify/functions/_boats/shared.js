@@ -545,8 +545,25 @@ function normalizeBoatWizardNode(node, currConvert) {
   const header = node?.VehicleRemarketingHeader;
   const detail = node?.VehicleRemarketingBoatLineItem;
   const fine = detail?.VehicleRemarketingBoat;
-  const engineLine = detail?.VehicleRemarketingEngineLineItem;
-  const engine = engineLine?.VehicleRemarketingEngine;
+  const engineLineRaw = detail?.VehicleRemarketingEngineLineItem;
+  const engineLines = Array.isArray(engineLineRaw)
+    ? engineLineRaw
+    : engineLineRaw
+    ? [engineLineRaw]
+    : [];
+  let engine = null;
+  for (const line of engineLines) {
+    const enginesRaw = line?.VehicleRemarketingEngine;
+    const engines = Array.isArray(enginesRaw)
+      ? enginesRaw
+      : enginesRaw
+      ? [enginesRaw]
+      : [];
+    if (engines.length) {
+      engine = engines[0];
+      break;
+    }
+  }
 
   const boat_id =
     header?.DocumentIdentificationGroup?.DocumentIdentification?.DocumentID ?? "";
@@ -588,9 +605,15 @@ function normalizeBoatWizardNode(node, currConvert) {
     }
   }
 
-  const cabinsNum = fine?.NumberOfCabinsNumeric != null ? Number(fine.NumberOfCabinsNumeric) : "";
-  const passengersNum =
-    fine?.MaximumNumberOfPassengersNumeric != null ? Number(fine.MaximumNumberOfPassengersNumeric) : "";
+  const cabinsRaw = extractXmlValue(fine?.NumberOfCabinsNumeric ?? null);
+  const cabinsNum = cabinsRaw != null && cabinsRaw !== "" ? Number(cabinsRaw) : "";
+  const passengersRaw = extractXmlValue(
+    fine?.MaximumNumberOfPassengersNumeric ??
+      detail?.MaximumNumberOfPassengersNumeric ??
+      header?.MaximumNumberOfPassengersNumeric ??
+      null
+  );
+  const passengersNum = passengersRaw != null && passengersRaw !== "" ? Number(passengersRaw) : "";
 
   const maxSpeedMeasure = fine?.MaximumSpeedMeasure;
   let max_speed = "";
