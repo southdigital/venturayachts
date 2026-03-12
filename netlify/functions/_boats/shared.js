@@ -97,6 +97,20 @@ function asArray(value) {
   return [value];
 }
 
+function firstNonEmpty(values) {
+  for (const value of values) {
+    if (value == null) continue;
+    if (value === "") continue;
+    return value;
+  }
+  return null;
+}
+
+function toOptionalNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : "";
+}
+
 function matchHostname(hostname, pattern) {
   if (!hostname || !pattern) return false;
   if (pattern.startsWith("*.")) {
@@ -631,8 +645,19 @@ function normalizeBoatWizardNode(node, currConvert) {
   }
 
   const cabinsNum = fine?.NumberOfCabinsNumeric != null ? Number(fine.NumberOfCabinsNumeric) : "";
-  const passengersNum =
-    fine?.MaximumNumberOfPassengersNumeric != null ? Number(fine.MaximumNumberOfPassengersNumeric) : "";
+  const passengerCandidates = [
+    fine?.MaximumNumberOfPassengersNumeric,
+    detail?.MaximumNumberOfPassengersNumeric,
+  ];
+  for (const line of engineLines) {
+    passengerCandidates.push(line?.MaximumNumberOfPassengersNumeric);
+    const engines = asArray(line?.VehicleRemarketingEngine);
+    for (const candidate of engines) {
+      passengerCandidates.push(candidate?.MaximumNumberOfPassengersNumeric);
+    }
+  }
+  const passengersRaw = firstNonEmpty(passengerCandidates);
+  const passengersNum = passengersRaw != null ? toOptionalNumber(passengersRaw) : "";
 
   const maxSpeedMeasure = fine?.MaximumSpeedMeasure;
   let max_speed = "";
