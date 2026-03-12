@@ -91,6 +91,12 @@ function parseOriginInfo(origin) {
   }
 }
 
+function asArray(value) {
+  if (Array.isArray(value)) return value;
+  if (value == null) return [];
+  return [value];
+}
+
 function matchHostname(hostname, pattern) {
   if (!hostname || !pattern) return false;
   if (pattern.startsWith("*.")) {
@@ -555,8 +561,34 @@ function normalizeBoatWizardNode(node, currConvert) {
   const header = node?.VehicleRemarketingHeader;
   const detail = node?.VehicleRemarketingBoatLineItem;
   const fine = detail?.VehicleRemarketingBoat;
-  const engineLine = detail?.VehicleRemarketingEngineLineItem;
-  const engine = engineLine?.VehicleRemarketingEngine;
+  const engineLineRaw = detail?.VehicleRemarketingEngineLineItem;
+  const engineLines = asArray(engineLineRaw);
+  let engine = null;
+  for (const line of engineLines) {
+    const engines = asArray(line?.VehicleRemarketingEngine);
+    for (const candidate of engines) {
+      if (
+        candidate?.MakeString ||
+        candidate?.Model ||
+        candidate?.FuelTypeCode ||
+        candidate?.PowerMeasure
+      ) {
+        engine = candidate;
+        break;
+      }
+    }
+    if (engine) break;
+    if (
+      line?.MakeString ||
+      line?.Model ||
+      line?.FuelTypeCode ||
+      line?.PowerMeasure
+    ) {
+      engine = line;
+      break;
+    }
+    if (!engine && engines.length) engine = engines[0];
+  }
 
   const boat_id =
     header?.DocumentIdentificationGroup?.DocumentIdentification?.DocumentID ?? "";
@@ -610,7 +642,10 @@ function normalizeBoatWizardNode(node, currConvert) {
     max_speed = maxSpeedLabel(parts.join(" ").trim());
   }
 
-  const enginePowerNode = engine?.PowerMeasure?.MechanicalEnergyMeasure ?? null;
+  const enginePowerNodeRaw = engine?.PowerMeasure?.MechanicalEnergyMeasure ?? null;
+  const enginePowerNode = Array.isArray(enginePowerNodeRaw)
+    ? enginePowerNodeRaw[0]
+    : enginePowerNodeRaw;
   const engine_power_value = extractXmlValue(enginePowerNode);
   const engine_power_unit =
     (enginePowerNode && typeof enginePowerNode === "object" && enginePowerNode.unitCode) || "";
