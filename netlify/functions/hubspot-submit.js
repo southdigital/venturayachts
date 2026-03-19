@@ -68,6 +68,7 @@ export default async (req) => {
       )
     }
 
+    // Verify Google reCAPTCHA
     const captchaRes = await fetch("https://www.google.com/recaptcha/api/siteverify", {
       method: "POST",
       headers: {
@@ -81,6 +82,7 @@ export default async (req) => {
 
     const captchaRaw = await captchaRes.text()
     let captchaData = {}
+
     try {
       captchaData = captchaRaw ? JSON.parse(captchaRaw) : {}
     } catch {
@@ -127,24 +129,32 @@ export default async (req) => {
       )
     }
 
-    const portalId = "25403953"
-    const formGuid = "a083cd31-c7d0-4dfc-842e-560321804bbe"
+    // Build HubSpot context safely
+    const context = {}
+
+    if (pageUri && String(pageUri).trim()) {
+      context.pageUri = String(pageUri).trim()
+    }
+
+    if (pageName && String(pageName).trim()) {
+      context.pageName = String(pageName).trim()
+    }
+
+    if (hutk && String(hutk).trim()) {
+      context.hutk = String(hutk).trim()
+    }
 
     const hubspotPayload = {
       submittedAt: Date.now(),
       fields: [
-        { name: "firstname", value: String(firstname || "") },
-        { name: "lastname", value: String(lastname || "") },
-        { name: "email", value: String(email || "") },
-        { name: "mobilephone", value: String(mobilephone || "") },
-        { name: "message", value: String(message || "") },
-        { name: "reference_boat", value: String(reference_boat || "") },
+        { name: "firstname", value: String(firstname || "").trim() },
+        { name: "lastname", value: String(lastname || "").trim() },
+        { name: "email", value: String(email || "").trim() },
+        { name: "mobilephone", value: String(mobilephone || "").trim() },
+        { name: "message", value: String(message || "").trim() },
+        { name: "reference_boat", value: String(reference_boat || "").trim() },
       ],
-      context: {
-        hutk: String(hutk || ""),
-        pageUri: String(pageUri || ""),
-        pageName: String(pageName || ""),
-      },
+      context,
       legalConsentOptions: {
         consent: {
           consentToProcess: true,
@@ -161,6 +171,9 @@ export default async (req) => {
       },
     }
 
+    const portalId = "25403953"
+    const formGuid = "a083cd31-c7d0-4dfc-842e-560321804bbe"
+
     const hubspotRes = await fetch(
       `https://api.hsforms.com/submissions/v3/integration/secure/submit/${portalId}/${formGuid}`,
       {
@@ -175,6 +188,7 @@ export default async (req) => {
 
     const hubspotRaw = await hubspotRes.text()
     let hubspotData = {}
+
     try {
       hubspotData = hubspotRaw ? JSON.parse(hubspotRaw) : {}
     } catch {
