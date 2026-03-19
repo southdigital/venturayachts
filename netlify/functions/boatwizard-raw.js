@@ -4,15 +4,16 @@ import {
   corsHeaders,
   corsPreflightResponse,
   corsGuardResponse,
+  boatWizardFetchOptions,
 } from "./_boats/shared.js";
 
 const DEFAULT_TIMEOUT_MS = 8000;
 
-async function fetchWithTimeout(url, timeoutMs) {
+async function fetchWithTimeout(url, timeoutMs, options = {}) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { signal: controller.signal });
+    return await fetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(id);
   }
@@ -36,7 +37,7 @@ export default async (req) => {
   )}/boats?status=on`;
 
   try {
-    const res = await fetchWithTimeout(boatWizardUrl, timeoutMs);
+    const res = await fetchWithTimeout(boatWizardUrl, timeoutMs, boatWizardFetchOptions());
     const bodyText = await res.text();
 
     if (!res.ok) {

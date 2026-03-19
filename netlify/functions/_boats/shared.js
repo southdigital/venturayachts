@@ -12,6 +12,11 @@ const BLOB_SCHEMA_VERSION = 1;
 const DEFAULT_BOATSCOM_KEY = "5bd306bd6169";
 const DEFAULT_BOATWIZARD_EVENT_ID = "80eef85c-313d-4b83-9053-0cba19e92a93";
 const DEFAULT_CURRCONV_KEY = "32e0eac2807f4ce3ac976f8233ed2f06";
+const DEFAULT_BOATWIZARD_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+const DEFAULT_BOATWIZARD_ACCEPT =
+  "application/xml,text/xml;q=0.9,application/xhtml+xml;q=0.8,*/*;q=0.7";
+const DEFAULT_BOATWIZARD_ACCEPT_LANGUAGE = "en-US,en;q=0.9";
 
 const SUPPORTED_CURRENCIES = ["GBP", "EUR", "USD"];
 const DEFAULT_LANGUAGE = "en";
@@ -174,6 +179,19 @@ export function getConfig() {
     blobStoreName: envString("BOATS_BLOB_STORE") || DEFAULT_BLOB_STORE_NAME,
     blobKey: envString("BOATS_BLOB_KEY") || DEFAULT_BLOB_KEY,
   };
+}
+
+export function boatWizardFetchOptions() {
+  const headers = {
+    "user-agent": envString("BOATWIZARD_USER_AGENT") || DEFAULT_BOATWIZARD_USER_AGENT,
+    accept: envString("BOATWIZARD_ACCEPT") || DEFAULT_BOATWIZARD_ACCEPT,
+    "accept-language": envString("BOATWIZARD_ACCEPT_LANGUAGE") || DEFAULT_BOATWIZARD_ACCEPT_LANGUAGE,
+  };
+  const referer = envString("BOATWIZARD_REFERER");
+  if (referer) headers.referer = referer;
+  const origin = envString("BOATWIZARD_ORIGIN");
+  if (origin) headers.origin = origin;
+  return { headers };
 }
 
 export function jsonResponse(payload, status = 200, extraHeaders = {}, req = null) {
@@ -781,7 +799,7 @@ export async function fetchAndBuildBaseDataset() {
   const [currResult, boatsComResult, boatWizardResult] = await Promise.allSettled([
     getCurrConvert(cfg),
     fetchJson(boatsComUrl, {}, cfg.fetchTimeoutMs),
-    fetchText(boatWizardUrl, {}, cfg.fetchTimeoutMs),
+    fetchText(boatWizardUrl, boatWizardFetchOptions(), cfg.fetchTimeoutMs),
   ]);
 
   const currConvert =
