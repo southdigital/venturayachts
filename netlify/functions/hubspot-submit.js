@@ -1,6 +1,23 @@
-export default async (req, context) => {
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Content-Type": "application/json",
+}
+
+export default async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("", {
+      status: 204,
+      headers: CORS_HEADERS,
+    })
+  }
+
   if (req.method !== "POST") {
-    return json({ message: "Method not allowed" }, 405)
+    return new Response(JSON.stringify({ message: "Method not allowed" }), {
+      status: 405,
+      headers: CORS_HEADERS,
+    })
   }
 
   try {
@@ -21,25 +38,37 @@ export default async (req, context) => {
     } = body || {}
 
     if (!firstname || !lastname || !email || !mobilephone) {
-      return json({ message: "Missing required fields." }, 400)
+      return new Response(
+        JSON.stringify({ message: "Missing required fields." }),
+        { status: 400, headers: CORS_HEADERS }
+      )
     }
 
     if (!recaptchaToken) {
-      return json({ message: "Missing reCAPTCHA token." }, 400)
+      return new Response(
+        JSON.stringify({ message: "Missing reCAPTCHA token." }),
+        { status: 400, headers: CORS_HEADERS }
+      )
     }
 
     const RECAPTCHA_SECRET_KEY = process.env.RECAPTCHA_SECRET_KEY
     const HUBSPOT_PRIVATE_APP_TOKEN = process.env.HUBSPOT_PRIVATE_APP_TOKEN
 
     if (!RECAPTCHA_SECRET_KEY) {
-      return json({ message: "Missing RECAPTCHA_SECRET_KEY env var." }, 500)
+      return new Response(
+        JSON.stringify({ message: "Missing RECAPTCHA_SECRET_KEY env var." }),
+        { status: 500, headers: CORS_HEADERS }
+      )
     }
 
     if (!HUBSPOT_PRIVATE_APP_TOKEN) {
-      return json({ message: "Missing HUBSPOT_PRIVATE_APP_TOKEN env var." }, 500)
+      return new Response(
+        JSON.stringify({ message: "Missing HUBSPOT_PRIVATE_APP_TOKEN env var." }),
+        { status: 500, headers: CORS_HEADERS }
+      )
     }
 
-    // 1) Verify reCAPTCHA with Google
+    // Verify reCAPTCHA
     const captchaRes = await fetch("https://www.google.com/recaptcha/api/siteverify", {
       method: "POST",
       headers: {
@@ -54,37 +83,36 @@ export default async (req, context) => {
     const captchaData = await captchaRes.json()
 
     if (!captchaData.success) {
-      return json(
-        {
+      return new Response(
+        JSON.stringify({
           message: "Captcha verification failed.",
           details: captchaData,
-        },
-        400
+        }),
+        { status: 400, headers: CORS_HEADERS }
       )
     }
 
-    // Optional hardening for reCAPTCHA v3
     if (typeof captchaData.action === "string" && captchaData.action !== "submit") {
-      return json(
-        {
+      return new Response(
+        JSON.stringify({
           message: "Invalid reCAPTCHA action.",
           details: captchaData,
-        },
-        400
+        }),
+        { status: 400, headers: CORS_HEADERS }
       )
     }
 
     if (typeof captchaData.score === "number" && captchaData.score < 0.5) {
-      return json(
-        {
+      return new Response(
+        JSON.stringify({
           message: "Spam check failed.",
           score: captchaData.score,
-        },
-        400
+        }),
+        { status: 400, headers: CORS_HEADERS }
       )
     }
 
-    // 2) Submit to HubSpot secure endpoint
+    // Submit to HubSpot secure endpoint
     const portalId = "25403953"
     const formGuid = "a083cd31-c7d0-4dfc-842e-560321804bbe"
 
@@ -131,46 +159,40 @@ export default async (req, context) => {
       }
     )
 
-    const hubspotData = await hubspotRes.json().catch(() => ({}))
+    const rawText = await hubspotRes.text()
+    let hubspotData = {}
+    try {
+      hubspotData = rawText ? JSON.parse(rawText) : {}
+    } catch {
+      hubspotData = { rawText }
+    }
 
     if (!hubspotRes.ok) {
-      return json(
-        {
+      return new Response(
+        JSON.stringify({
           message: "HubSpot submission failed.",
+          status: hubspotRes.status,
           details: hubspotData,
-        },
-        hubspotRes.status
+        }),
+        { status: hubspotRes.status, headers: CORS_HEADERS }
       )
     }
 
-    return json({
-      ok: true,
-      redirectUri: hubspotData.redirectUri || "",
-      inlineMessage: hubspotData.inlineMessage || "",
-    })
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        redirectUri: hubspotData.redirectUri || "",
+        inlineMessage: hubspotData.inlineMessage || "",
+      }),
+      { status: 200, headers: CORS_HEADERS }
+    )
   } catch (error) {
-    return json(
-      {
+    return new Response(
+      JSON.stringify({
         message: "Server error.",
-        details: error?.message || "Unknown error",
-      },
-      500
+        details: error?.message || String(error),
+      }),
+      { status: 500, headers: CORS_HEADERS }
     )
   }
-}
-
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-    },
-  })
-}
-
-export const config = {
-  path: "/api/hubspot-submit",
 }
