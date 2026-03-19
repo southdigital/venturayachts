@@ -7,7 +7,7 @@ const CORS_HEADERS = {
 
 export default async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("", {
+    return new Response(null, {
       status: 204,
       headers: CORS_HEADERS,
     })
@@ -68,7 +68,6 @@ export default async (req) => {
       )
     }
 
-    // Verify reCAPTCHA
     const captchaRes = await fetch("https://www.google.com/recaptcha/api/siteverify", {
       method: "POST",
       headers: {
@@ -80,7 +79,23 @@ export default async (req) => {
       }).toString(),
     })
 
-    const captchaData = await captchaRes.json()
+    const captchaRaw = await captchaRes.text()
+    let captchaData = {}
+    try {
+      captchaData = captchaRaw ? JSON.parse(captchaRaw) : {}
+    } catch {
+      captchaData = { raw: captchaRaw }
+    }
+
+    if (!captchaRes.ok) {
+      return new Response(
+        JSON.stringify({
+          message: "Captcha verification request failed.",
+          details: captchaData,
+        }),
+        { status: 400, headers: CORS_HEADERS }
+      )
+    }
 
     if (!captchaData.success) {
       return new Response(
@@ -112,7 +127,6 @@ export default async (req) => {
       )
     }
 
-    // Submit to HubSpot secure endpoint
     const portalId = "25403953"
     const formGuid = "a083cd31-c7d0-4dfc-842e-560321804bbe"
 
@@ -159,12 +173,12 @@ export default async (req) => {
       }
     )
 
-    const rawText = await hubspotRes.text()
+    const hubspotRaw = await hubspotRes.text()
     let hubspotData = {}
     try {
-      hubspotData = rawText ? JSON.parse(rawText) : {}
+      hubspotData = hubspotRaw ? JSON.parse(hubspotRaw) : {}
     } catch {
-      hubspotData = { rawText }
+      hubspotData = { raw: hubspotRaw }
     }
 
     if (!hubspotRes.ok) {
