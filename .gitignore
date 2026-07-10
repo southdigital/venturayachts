@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Netlify
+.netlify/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
