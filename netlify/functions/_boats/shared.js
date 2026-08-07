@@ -4,10 +4,25 @@ import { XMLParser } from "fast-xml-parser";
 const DEFAULT_TTL_SECONDS = 30 * 60;
 const DEFAULT_PER_PAGE = 10;
 const DEFAULT_FETCH_TIMEOUT_MS = 5000;
+// The two boat feeds return multi-MB payloads and routinely need more than the
+// 5s used for the small currency call, so they get their own (longer) budget.
+// Kept under Netlify's default 10s synchronous function limit — raising it past
+// that via BOATS_SOURCE_FETCH_TIMEOUT_MS only helps if the function limit is
+// also raised, otherwise the invocation is killed before the timeout fires.
+const DEFAULT_SOURCE_FETCH_TIMEOUT_MS = 8000;
+// A build where a source failed is only cached briefly, so a healthy feed is
+// picked back up quickly instead of being pinned for the full TTL.
+const DEFAULT_PARTIAL_TTL_SECONDS = 120;
+// How old a complete snapshot may be before we stop using it to backfill the
+// rows a failing source would have supplied.
+const DEFAULT_PARTIAL_BACKFILL_MAX_AGE_SECONDS = 24 * 60 * 60;
 const DEFAULT_REFRESH_BACKOFF_SECONDS = 120;
 const DEFAULT_BLOB_STORE_NAME = "boats-cache";
 const DEFAULT_BLOB_KEY = "base-dataset";
-const BLOB_SCHEMA_VERSION = 1;
+// Bumped to 2 with the partial-build guard: v1 payloads predate the `partial`
+// flag, so a truncated snapshot stored under v1 cannot be told apart from a
+// complete one. Ignoring them forces one clean rebuild after deploy.
+const BLOB_SCHEMA_VERSION = 2;
 
 const DEFAULT_BOATSCOM_KEY = "5bd306bd6169";
 const DEFAULT_BOATWIZARD_EVENT_ID = "80eef85c-313d-4b83-9053-0cba19e92a93";
@@ -170,8 +185,17 @@ function resolveCorsAllowOrigin(origin) {
 export function getConfig() {
   return {
     ttlSeconds: envInt("BOATS_CACHE_TTL_SECONDS", DEFAULT_TTL_SECONDS),
+    partialTtlSeconds: envInt("BOATS_PARTIAL_TTL_SECONDS", DEFAULT_PARTIAL_TTL_SECONDS),
+    partialBackfillMaxAgeSeconds: envInt(
+      "BOATS_PARTIAL_BACKFILL_MAX_AGE_SECONDS",
+      DEFAULT_PARTIAL_BACKFILL_MAX_AGE_SECONDS
+    ),
     perPage: envInt("BOATS_PER_PAGE", DEFAULT_PER_PAGE),
     fetchTimeoutMs: envInt("BOATS_FETCH_TIMEOUT_MS", DEFAULT_FETCH_TIMEOUT_MS),
+    sourceFetchTimeoutMs: envInt(
+      "BOATS_SOURCE_FETCH_TIMEOUT_MS",
+      DEFAULT_SOURCE_FETCH_TIMEOUT_MS
+    ),
     refreshBackoffSeconds: envInt("BOATS_REFRESH_BACKOFF_SECONDS", DEFAULT_REFRESH_BACKOFF_SECONDS),
     boatsComKey: envString("BOATSCOM_API_KEY") || DEFAULT_BOATSCOM_KEY,
     boatWizardEventId: envString("BOATWIZARD_EVENT_ID") || DEFAULT_BOATWIZARD_EVENT_ID,
@@ -798,8 +822,8 @@ export async function fetchAndBuildBaseDataset() {
 
   const [currResult, boatsComResult, boatWizardResult] = await Promise.allSettled([
     getCurrConvert(cfg),
-    fetchJson(boatsComUrl, {}, cfg.fetchTimeoutMs),
-    fetchText(boatWizardUrl, boatWizardFetchOptions(), cfg.fetchTimeoutMs),
+    fetchJson(boatsComUrl, {}, cfg.sourceFetchTimeoutMs),
+    fetchText(boatWizardUrl, boatWizardFetchOptions(), cfg.sourceFetchTimeoutMs),
   ]);
 
   const currConvert =
@@ -862,8 +886,51 @@ export async function fetchAndBuildBaseDataset() {
   return {
     last_updated: new Date().toISOString(),
     stale: false,
+    // True when at least one feed failed, so the row set is incomplete. Callers
+    // must not treat this as a good snapshot to cache long-term or persist.
+    partial: !source_status.boatscom.ok || !source_status.boatwizard.ok,
     source_status,
     data: merged,
+  };
+}
+
+/**
+ * Fold a previous complete snapshot into a partial build so the rows the failing
+ * feed would have supplied are still served. Fresh rows always win; only IDs
+ * missing from the new build are carried over.
+ */
+function backfillFromSnapshot(built, previous) {
+  const prevRows = Array.isArray(previous?.data) ? previous.data : [];
+  if (prevRows.length === 0) return built;
+
+  const seen = new Set(
+    (built.data || []).map((b) => String(b?.boat_id ?? "")).filter(Boolean)
+  );
+
+  const carried = [];
+  for (const boat of prevRows) {
+    const key = String(boat?.boat_id ?? "");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    carried.push(boat);
+  }
+
+  if (carried.length === 0) return built;
+
+  const data = built.data.concat(carried);
+  data.sort((a, b) => toNumberOrZero(a.price) - toNumberOrZero(b.price));
+
+  return {
+    ...built,
+    data,
+    source_status: {
+      ...built.source_status,
+      backfill: {
+        ok: true,
+        carried_rows: carried.length,
+        from: previous?.last_updated ?? null,
+      },
+    },
   };
 }
 
@@ -949,17 +1016,24 @@ async function writeBlobDataset(cfg, payload) {
   }
 }
 
-function isExpired(cached, ttlSeconds) {
+function ageSeconds(dataset) {
+  const ts = Date.parse(dataset?.last_updated ?? "");
+  if (!Number.isFinite(ts)) return Infinity;
+  return (Date.now() - ts) / 1000;
+}
+
+function isExpired(cached, cfg) {
   if (!cached?.last_updated) return true;
-  const ts = Date.parse(cached.last_updated);
-  if (!Number.isFinite(ts)) return true;
-  return (Date.now() - ts) / 1000 > ttlSeconds;
+  // Partial snapshots get a much shorter life so a recovered feed is picked up
+  // within minutes rather than being pinned for the full TTL.
+  const ttl = cached.partial ? cfg.partialTtlSeconds : cfg.ttlSeconds;
+  return ageSeconds(cached) > ttl;
 }
 
 export async function getCachedBaseDataset({ forceRefresh = false } = {}) {
   const cfg = getConfig();
   const cachedData = memoryCache;
-  const expired = cachedData ? isExpired(cachedData, cfg.ttlSeconds) : true;
+  const expired = cachedData ? isExpired(cachedData, cfg) : true;
   const now = Date.now();
 
   if (!forceRefresh && cachedData && !expired) {
@@ -985,10 +1059,45 @@ export async function getCachedBaseDataset({ forceRefresh = false } = {}) {
 
   try {
     const built = await fetchAndBuildBaseDataset();
-    memoryCache = built;
     refreshBackoffUntil = 0;
-    await writeBlobDataset(cfg, built);
-    return built;
+
+    if (!built.partial) {
+      memoryCache = built;
+      await writeBlobDataset(cfg, built);
+      return built;
+    }
+
+    // One or more feeds failed. Serving this as-is silently drops every listing
+    // that feed owns (and, before this guard, pinned that truncated set into the
+    // blob for the full TTL). Backfill from the last complete snapshot instead,
+    // keep it out of the blob, and let the short partial TTL retry soon.
+    const previous =
+      cachedData && !cachedData.partial
+        ? cachedData
+        : await readBlobDataset(cfg, { consistency: "strong" });
+
+    const usablePrevious =
+      previous &&
+      !previous.partial &&
+      ageSeconds(previous) <= cfg.partialBackfillMaxAgeSeconds
+        ? previous
+        : null;
+
+    const result = usablePrevious
+      ? backfillFromSnapshot(built, usablePrevious)
+      : built;
+
+    console.log(
+      "[boats] partial build",
+      JSON.stringify({
+        rows: result.data.length,
+        fresh_rows: built.data.length,
+        source_status: built.source_status,
+      })
+    );
+
+    memoryCache = result;
+    return result;
   } catch (e) {
     refreshBackoffUntil = Date.now() + cfg.refreshBackoffSeconds * 1000;
     const errorMessage = e?.message || "refresh failed";
@@ -1142,6 +1251,7 @@ export function applyQueryFiltering(base, url) {
       measurementVal,
       last_updated: base?.last_updated ?? null,
       stale: base?.stale ?? false,
+      partial: base?.partial ?? false,
       source_status: base?.source_status ?? null,
     },
     data: paged,

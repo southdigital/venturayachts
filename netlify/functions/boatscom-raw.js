@@ -20,7 +20,7 @@ async function fetchWithTimeout(url, timeoutMs) {
 
 export default async (req) => {
   const cfg = getConfig();
-  const timeoutMs = Math.max(1000, cfg.fetchTimeoutMs || DEFAULT_TIMEOUT_MS);
+  const timeoutMs = Math.max(1000, cfg.sourceFetchTimeoutMs || DEFAULT_TIMEOUT_MS);
 
   if (req?.method === "OPTIONS") {
     return corsPreflightResponse(req);

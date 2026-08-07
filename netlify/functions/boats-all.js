@@ -164,6 +164,7 @@ export default async (req) => {
           currencyVal,
           measurementVal,
           last_updated: base.last_updated,
+          partial: base.partial ?? false,
           source_status: base.source_status,
         },
         data: rows,
