@@ -6,11 +6,14 @@ import sharp from "sharp";
 // so this deliberately avoids the Netlify Image CDN.
 export const config = { path: "/img" };
 
-// Only these upstream hosts may be fetched (SSRF guard). These are the two
-// origins the feed serves photo URLs from.
+// Only these upstream hosts may be fetched (SSRF guard). These are the
+// origins the feed serves photo URLs from. CYA have moved part of their
+// image library onto DigitalOcean Spaces, so charter photos come from
+// either centralyachtagent.com or the cya.sfo3 Spaces CDN.
 const ALLOWED_HOSTS = new Set([
   "images.boatsgroup.com",
   "www.centralyachtagent.com",
+  "cya.sfo3.cdn.digitaloceanspaces.com",
 ]);
 
 // images.boatsgroup.com 404s generic proxies (weserv/wsrv included). It only

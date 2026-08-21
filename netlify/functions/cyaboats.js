@@ -383,10 +383,42 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_FETCH_TIM
   }
 }
 
+// Upstream URLs carry `user` and `apicode`, so never let a raw URL reach a log
+// line or an error message.
+function redactUrl(url) {
+  try {
+    const u = new URL(url);
+    for (const key of ["user", "apicode"]) {
+      if (u.searchParams.has(key)) u.searchParams.set(key, "REDACTED");
+    }
+    return u.toString();
+  } catch {
+    return "invalid-url";
+  }
+}
+
 async function fetchJson(url, options = {}, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS) {
   const res = await fetchWithTimeout(url, options, timeoutMs);
-  if (!res.ok) throw new Error(`Fetch failed ${res.status} for ${url}`);
-  return res.json();
+
+  // Read as text first so a non-JSON body (a PHP error page, a WAF block) can be
+  // reported instead of being lost inside a bare "Unexpected token" parse error.
+  const text = await res.text();
+
+  if (!res.ok) {
+    const err = new Error(`Fetch failed ${res.status} for ${redactUrl(url)}`);
+    err.status = res.status;
+    err.bodySnippet = text.slice(0, 300);
+    throw err;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    const err = new Error(`Invalid JSON (${res.status}) from ${redactUrl(url)}`);
+    err.status = res.status;
+    err.bodySnippet = text.slice(0, 300);
+    throw err;
+  }
 }
 
 async function getCurrConvert(cfg) {
@@ -916,9 +948,19 @@ async function fetchAndBuildBaseDataset() {
       ? payload
       : [];
   } else {
+    // The only thing that surfaces to callers is "CYA feed failed", so record the
+    // real upstream reason here or it is lost entirely.
+    const reason = cyaResult.reason;
+    console.log("[yachts] cya list fetch failed", {
+      url: redactUrl(cyaUrl),
+      status: reason?.status ?? null,
+      name: reason?.name ?? null,
+      message: reason?.message || String(reason),
+      body: reason?.bodySnippet ?? null,
+    });
     source_status.cya = {
       ok: false,
-      error: cyaResult.reason?.message || "cya failed",
+      error: reason?.message || "cya failed",
     };
   }
 
