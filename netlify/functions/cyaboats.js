@@ -915,16 +915,59 @@ function normalizeCyaDetail(yacht, currConvert) {
  * Fetch + build list dataset
  * ========================================================================== */
 
+/* ----------------------------------------------------------------------------
+ * CYA location filter
+ *
+ * As of ~16 July 2026 json-snyachts.php rejects a request that carries no real
+ * search filter:
+ *   400 {"detail":"At least one of boattype, ylocations, srcN, yachtname,
+ *        clid, clin or single_boat is required."}
+ * The old "&ylocations[]=&ylocations[]" sent two EMPTY values, which no longer
+ * counts as supplying ylocations, so every refresh 400s. To get the whole fleet
+ * we now pass every location code explicitly. Codes come from json-locations.php
+ * so a location CYA adds later is picked up automatically; the static list is
+ * only a fallback for when that call fails.
+ * -------------------------------------------------------------------------- */
+
+const CYA_LOCATIONS_URL = "https://www.centralyachtagent.com/snapins/json-locations.php";
+
+const FALLBACK_LOCATION_CODES = Array.from({ length: 53 }, (_, i) => `src${i + 1}`);
+
+async function getLocationCodes(cfg) {
+  const url =
+    CYA_LOCATIONS_URL +
+    `?user=${encodeURIComponent(cfg.cyaUser)}` +
+    `&apicode=${encodeURIComponent(cfg.cyaApiCode)}`;
+
+  try {
+    const payload = await fetchJson(url, {}, cfg.fetchTimeoutMs);
+    const codes = (payload?.location ?? [])
+      .map((entry) => entry?.yachtLocCode)
+      .filter((code) => typeof code === "string" && code);
+    if (codes.length) return codes;
+    console.log("[yachts] cya locations returned no codes, using fallback list");
+  } catch (e) {
+    console.log("[yachts] cya locations fetch failed, using fallback list", e?.message || e);
+  }
+  return FALLBACK_LOCATION_CODES;
+}
+
+function buildLocationQuery(codes) {
+  return codes.map((code) => `&ylocations[]=${encodeURIComponent(code)}`).join("");
+}
+
 async function fetchAndBuildBaseDataset() {
   const cfg = getConfig();
 
   if (!cfg.cyaUser) throw new Error("Missing env var CYA_USER_ID");
   if (!cfg.cyaApiCode) throw new Error("Missing env var CYA_API_CODE");
 
+  const locationCodes = await getLocationCodes(cfg);
+
   const cyaUrl =
     "https://www.centralyachtagent.com/snapins/json-snyachts.php" +
     `?user=${encodeURIComponent(cfg.cyaUser)}` +
-    "&ylocations[]=&ylocations[]" +
+    buildLocationQuery(locationCodes) +
     `&apicode=${encodeURIComponent(cfg.cyaApiCode)}`;
 
   const source_status = {
